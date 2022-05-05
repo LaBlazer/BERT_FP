@@ -59,7 +59,7 @@ if __name__ == '__main__':
     test['y'], test['cr']= FT_data('ubuntu_data/test.txt',tokenizer=bert_tokenizer)
     #char_vocab = defaultdict(float)
     dataset = train, dev, test
-    pickle.dump(dataset, open('douban_data/dataset_1M.pkl', 'wb'))
+    pickle.dump(dataset, open('ubuntu_data/dataset.pkl', 'wb'))
 
 
     #posttraining data construction
