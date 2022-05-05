@@ -22,8 +22,7 @@ import pickle
 from torch.utils.data import Dataset
 import random
 from setproctitle import setproctitle
-setproctitle('douban_final')
-
+setproctitle('jaden han')
 
 torch.manual_seed(0)
 torch.cuda.manual_seed_all(0)
@@ -33,8 +32,6 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 def warmup_linear(x, warmup=0.002):
     if x < warmup:
         return x/warmup
@@ -43,82 +40,83 @@ def warmup_linear(x, warmup=0.002):
 
 
 class BERTDataset(Dataset):
-    def __init__(self, corpus_path, tokenizer, seq_len, encoding="utf-8-sig"):
+    def __init__(self, corpus_path, tokenizer, seq_len, encoding="utf-8-sig", corpus_lines=None):
         self.vocab = tokenizer.vocab
         self.tokenizer = tokenizer
         self.seq_len = seq_len
         self.corpus_path = corpus_path
         self.encoding = encoding
         self.sample_to_doc = [] # map sample index to doc and line
-        
         self.all_docs = []
         doc = []
 
+        
+        
         crsets = pickle.load(file=open(corpus_path, 'rb'))
-        #crsets=crsets[:100000]#crsets[:50000]+crsets[500000:]
         cnt=0
         lcnt=0
         for crset in tqdm(crsets):
             for line in crset:
                 if len(line) == 0:
                     continue
-                if len(line) < 12:
+                if len(line) < 10:
                     if len(self.tokenizer.tokenize(line)) == 0:
-                        # print('\n'+line+'\n')
                         cnt += 1
                         continue
                 sample = {"doc_id": len(self.all_docs),
-                            "line": len(doc),
-                            "end": 0
-                            }
+                        "line": len(doc),
+                        "end": 0 ,
+                        "linenum":1
+                        }
                 self.sample_to_doc.append(sample)
                 doc.append(line)
+                
 
             if (len(doc) != 0):
                 self.all_docs.append(doc)
             else:
                 print("empty")
 
-
-            if len(doc)<2:
-                print("!!")
-            if (len(doc) < 3):
-
-                for i in range(len(doc)-1):
+            if (len(doc) < 4):
+                for i in range(len(doc) - 1):
                     self.sample_to_doc.pop()
 
-                self.sample_to_doc[-1]['end']=len(doc)
+                self.sample_to_doc[-1]['end'] = len(doc)
+            
                 lcnt+=1
             else:
-            # remove last added sample because there won't be a subsequent line anymore in the doc
+                
+                self.sample_to_doc.pop()
                 self.sample_to_doc.pop()
                 self.sample_to_doc.pop()
 
             doc = []
+            
         print(cnt,lcnt)
 
+
+        
         for doc in self.all_docs:
             if len(doc) == 0:
                 print("problem")
-        self.num_docs = len(self.all_docs)
+
 
     def __len__(self):
         return len(self.sample_to_doc)
 
     def __getitem__(self, item):
         sample = self.sample_to_doc[item]
-        #방법에 비해 문장 길이가 짧은경우.
-        length=sample['end']
+        length = sample['end']
 
-        #dialogue session length < short context length
-        if length!=0:
-            tokens_a=[]
-            for i in range(length-1):
-                tokens_a+=self.tokenizer.tokenize(self.all_docs[sample["doc_id"]][sample["line"]+i])+[self.tokenizer.eos_token]
+        #dailogue session length < short context length k.
+        if length != 0:
+            tokens_a = []
+            for i in range(length - 1):
+                tokens_a+=self.tokenizer.tokenize(self.all_docs[sample["doc_id"]][i])+[self.tokenizer.eos_token]
             tokens_a.pop()
-    
 
-            rand = random.random()
+            #response = self.all_docs[sample["doc_id"]][sample["line"] + length - 1]
+            rand=random.random()
             if rand > 0.75:
 
                 # next correct response
@@ -128,7 +126,7 @@ class BERTDataset(Dataset):
 
             elif rand > 0.5:
 
-                # random utterance in the same dialogue session
+                # random utterance in the same dialogue session.
 
                 rand_idx = random.randint(0, length - 2)
 
@@ -138,23 +136,24 @@ class BERTDataset(Dataset):
 
             else:
 
-                #random utterance
+                #random utterace
                 response = self.get_random_line(sample)
                 is_next_label = 0
 
-            tokens_b=self.tokenizer.tokenize(response)
-           
+            tokens_b = self.tokenizer.tokenize(response)
+            # used later to avoid random nextSentence from same doc
 
         else:
-            t1, t2, t3, is_next_label = self.random_sent(item)
-            
-            tokens_a = self.tokenizer.tokenize(t1)+[self.tokenizer.eos_token]+self.tokenizer.tokenize(t2)
-            tokens_b = self.tokenizer.tokenize(t3)
+            # short context length k= 3 in ubuntu corpus.
+            t1, t2, t3, t4, is_next_label = self.random_sent(item)
+            # tokenize
+            tokens_a = self.tokenizer.tokenize(t1)+[self.tokenizer.eos_token]+self.tokenizer.tokenize(t2)+[self.tokenizer.eos_token]+self.tokenizer.tokenize(t3)
+            tokens_b = self.tokenizer.tokenize(t4)
 
-        
+        # combine to one sample
         cur_example = InputExample(tokens_a=tokens_a, tokens_b=tokens_b, is_next=is_next_label)
 
-        
+        # transform sample to features
         cur_features = convert_example_to_features(cur_example, self.seq_len, self.tokenizer)
 
         cur_tensors = (torch.tensor(cur_features.input_ids),
@@ -166,46 +165,46 @@ class BERTDataset(Dataset):
         return cur_tensors
 
     def random_sent(self, index):
-        """
-        Get one sample from corpus consisting of two sentences. With prob. 50% these are two subsequent sentences
-        from one doc. With 50% the second sentence will be a random one from another doc.
-        :param index: int, index of sample.
-        :return: (str, str, int), sentence 1, sentence 2, isNextSentence Label
-        """
-
+        
         sample = self.sample_to_doc[index]
         t1 = self.all_docs[sample["doc_id"]][sample["line"]]
         t2 = self.all_docs[sample["doc_id"]][sample["line"] + 1]
+        t3 = self.all_docs[sample["doc_id"]][sample["line"] + 2]
+        self.current_doc = sample["doc_id"]
         rand = random.random()
-
-        if rand > 0.75:
+        if rand > 0.75 :
+            #next correct response
             label = 2
-            t3 = self.all_docs[sample["doc_id"]][sample["line"] + 2]
-            # used later to avoid random nextSentence from same doc
-
+            t4 = self.all_docs[sample["doc_id"]][sample["line"] + 3]
+           
         elif rand > 0.5:
+
+            #random in the same dialogue session 
             samedoc = self.all_docs[sample["doc_id"]]
             linenum = random.randrange(len(samedoc))
-
-            while linenum == sample["line"] + 2:
+            
+            # not correct response.
+            while linenum == sample["line"] + 3:
                 linenum = random.randrange(len(samedoc))
 
-            # 같은 dialog session 이지만 다음문장은 아님.
-            t3 = samedoc[linenum]
+            t4 = samedoc[linenum]
             label = 1
 
         else:
-            # 랜덤이면 0
-            t3 = self.get_random_line(sample)
+            #random utterance
+            t4 = self.get_random_line(sample)
             label = 0
 
         assert len(t1) > 0
         assert len(t2) > 0
-        return t1, t2, t3 ,label
+        assert len(t3) > 0
+        assert len(t4) > 0
+        return t1, t2, t3 ,t4, label
 
 
     def get_random_line(self,sample):
 
+        #not in same dialogue session.
         while(True):
             rand_doc_idx = random.randint(0, len(self.all_docs)-1)
             if sample["doc_id"]!=rand_doc_idx:
@@ -220,8 +219,6 @@ class BERTDataset(Dataset):
 
 
 class InputExample(object):
-    
-
     def __init__(self, tokens_a, tokens_b=None, is_next=None, lm_labels=None):
         self.tokens_a = tokens_a
         self.tokens_b = tokens_b
@@ -286,6 +283,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # Account for [CLS], [SEP], [SEP] with "- 3"
     _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
 
+    #dynamic mask
     t1_label = random_word(tokens_a, tokenizer)
     t2_label = random_word(tokens_b, tokenizer)
     # concatenate lm labels and account for CLS, SEP, SEP
@@ -346,21 +344,23 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
                              is_next=example.is_next)
     return features
 
+
 def main():
     parser = argparse.ArgumentParser()
 
     ## Required parameters
     parser.add_argument("--train_file",
-                        default="./douban_data/douban_post_train.pkl",
+                        default="./ubuntu_data/ubuntu_post_train.pkl",
                         type=str,
                         help="The input train corpus.")
-    parser.add_argument("--bert_model", default="bert-base-chinese", type=str,
+    parser.add_argument("--bert_model", default="bert-base-uncased", type=str,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                              "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.")
     parser.add_argument("--output_dir",
-                        default="./FPT/PT_checkpoint/douban",
+                        default="./FPT/PT_checkpoint/ubuntu",
                         type=str,
                         help="The output directory where the model checkpoints will be written.")
+
     ## Other parameters
     parser.add_argument("--max_seq_length",
                         default=240,
@@ -372,9 +372,8 @@ def main():
                         default=50,
                         type=int,
                         help="Total batch size for training.")
-    
     parser.add_argument("--learning_rate",
-                        default=3e-5,
+                        default=1.5e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
@@ -393,10 +392,9 @@ def main():
                         type=int,
                         default=1,
                         help="Number of updates steps to accumualte before performing a backward/update pass.")
-   
+
     args = parser.parse_args()
 
-  
     device = torch.device("cuda")
 
     if args.gradient_accumulation_steps < 1:
@@ -404,7 +402,6 @@ def main():
                             args.gradient_accumulation_steps))
 
     args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
-
 
     os.makedirs(args.output_dir, exist_ok=True)
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
@@ -418,15 +415,16 @@ def main():
     model.resize_token_embeddings(len(tokenizer))
     model.cls.seq_relationship = nn.Linear(bertconfig.hidden_size, 3)
     #load checkpoint here
-    #model.bert.load_state_dict(state_dict=torch.load("douban_final/checkpoint28-455552/bert.pt"))
+    #model.bert.load_state_dict(state_dict=torch.load("ubuntu_final/checkpoint20-1637300/bert.pt"))
     model.to(device)
 
 
 
-
+    
     num_train_steps = None
     print("Loading Train Dataset", args.train_file)
-    train_dataset = BERTDataset(args.train_file, tokenizer, seq_len=args.max_seq_length)
+    train_dataset = BERTDataset(args.train_file, tokenizer, seq_len=args.max_seq_length,
+                                corpus_lines=None)
     num_train_steps = int(
         len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps * args.num_train_epochs)
 
@@ -515,30 +513,15 @@ def main():
 
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
-    """Truncates a sequence pair in place to the maximum length."""
-
-    # This is a simple heuristic which will always truncate the longer sequence
-    # one token at a time. This makes more sense than truncating an equal percent
-    # of tokens from each, since if one sequence is very short then each token
-    # that's truncated likely contains more information than a longer sequence.
+  
     while True:
         total_length = len(tokens_a) + len(tokens_b)
         if total_length <= max_length:
             break
-        if len(tokens_a) > 2*len(tokens_b):
+        if len(tokens_a) > 3*len(tokens_b):
             tokens_a.pop(0)
         else:
             tokens_b.pop()
-
-
-def accuracy(out, labels):
-    outputs = np.argmax(out, axis=1)
-    return np.sum(outputs == labels)
-
-
-def load_model(model, path):
-    model.load_state_dict(state_dict=torch.load(path))
-    if torch.cuda.is_available(): model.cuda()
 
 if __name__ == "__main__":
     main()
