@@ -44,7 +44,7 @@ def PT_data():
         if y[i]==1:
             crnew.append(crsingle)
     crnew=crnew
-    pickle.dump(crnew, file=open("ubuntu_post_train.pkl", 'wb'))
+    pickle.dump(crnew, file=open("ubuntu_data/ubuntu_post_train.pkl", 'wb'))
 
 if __name__ == '__main__':
     #Fine_tuning data constuction
