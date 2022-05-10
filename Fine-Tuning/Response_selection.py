@@ -11,7 +11,7 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 
 #Dataset path.
 FT_data={
-    'ubuntu': 'ubuntu_data/ubuntu_dataset_1M.pkl',
+    'ubuntu': 'ubuntu_data/dataset.pkl',
     'douban': 'douban_data/douban_dataset_1M.pkl',
     'e_commerce': 'e_commerce_data/e_commerce_dataset_1M.pkl'
 }
